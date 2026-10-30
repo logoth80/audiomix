@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audiomix — drag & drop audio mixer</title>
+<meta name="description" content="Drop audio files, arrange them on a timeline, split and move clips, play the mix, and export it as WAV.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true"></span>
+    <span class="brand-text">
+      <strong>Audiomix</strong>
+      <em>drag &amp; drop multitrack mixer</em>
+    </span>
+  </div>
+
+  <div class="toolbar" role="toolbar" aria-label="Transport">
+    <button id="btn-to-start" class="btn" title="Go to start (Home)">⏮</button>
+    <button id="btn-play" class="btn btn-primary" title="Play / pause (Space)" aria-pressed="false">▶ Play</button>
+    <button id="btn-stop" class="btn" title="Stop">■</button>
+    <span class="time-readout">
+      <span id="time-current" class="time-now">0:00.0</span>
+      <span class="time-sep">/</span>
+      <span id="time-total">0:00.0</span>
+    </span>
+    <span class="tb-sep"></span>
+    <button id="btn-split" class="btn" title="Split selected clip at playhead (S)">✂ Split</button>
+    <button id="btn-delete" class="btn btn-danger" title="Delete selected clip (Delete)">🗑 Delete</button>
+    <span class="tb-sep"></span>
+    <label class="mini-label" for="master-gain">Master</label>
+    <input id="master-gain" type="range" min="0" max="1.5" step="0.01" value="0.9" aria-label="Master volume">
+    <canvas id="meter" class="meter" width="120" height="14" aria-hidden="true"></canvas>
+    <span class="tb-sep"></span>
+    <button id="btn-zoom-out" class="btn" title="Zoom out (-)">−</button>
+    <button id="btn-zoom-in" class="btn" title="Zoom in (+)">+</button>
+    <button id="btn-zoom-fit" class="btn" title="Zoom to fit (0)">Fit</button>
+  </div>
+
+  <div class="toolbar toolbar-right" role="toolbar" aria-label="Files and export">
+    <button id="btn-add" class="btn">＋ Add audio</button>
+    <input id="file-input" type="file" accept="audio/*,.wav,.mp3,.ogg,.oga,.flac,.m4a,.aac,.weba,.webm" multiple hidden>
+    <button id="btn-save-project" class="btn" title="Save the session (tracks, positions, trims) as a .json file">💾 Save project</button>
+    <button id="btn-load-project" class="btn" title="Reopen a saved project">📂 Load project</button>
+    <input id="project-input" type="file" accept=".json,application/json" hidden>
+    <button id="btn-export" class="btn btn-accent" title="Render the mix and download a .wav file">⬇ Export WAV</button>
+  </div>
+</header>
+
+<main class="workspace">
+  <section class="stage">
+    <div class="stage-head">
+      <h1>Timeline</h1>
+      <p class="hint">Drop audio files anywhere to place them at the playhead. Drag a clip sideways to move it, drop it on another lane to change track, drag an edge to trim. Position the playhead and press <kbd>S</kbd> to split.</p>
+    </div>
+
+    <div id="timeline-scroll" class="timeline-scroll">
+      <div id="timeline-inner" class="timeline-inner">
+        <div class="ruler-row">
+          <div class="corner">
+            <span class="corner-label">Tracks</span>
+            <button id="btn-add-track" class="mini-btn" title="Add an empty track">＋</button>
+          </div>
+          <div class="ruler-wrap"><canvas id="ruler" class="ruler"></canvas></div>
+        </div>
+        <div id="lanes" class="lanes"></div>
+      </div>
+      <div id="empty-state" class="empty-state">
+        <div class="empty-inner">
+          <span class="empty-icon" aria-hidden="true">♫</span>
+          <h2>Drop audio files here</h2>
+          <p>WAV, MP3, OGG, FLAC, M4A… every file becomes its own track and starts at the playhead.</p>
+          <button id="btn-add-2" class="btn btn-primary">Choose files</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="stage-foot">
+      <span id="stat-tracks">0 tracks</span>
+      <span class="dot">·</span>
+      <span id="stat-clips">0 clips</span>
+      <span class="dot">·</span>
+      <span id="stat-length">0:00.0 total</span>
+      <span id="stat-end" class="end-badge" hidden></span>
+      <span id="stat-unsaved" class="warn-badge" hidden>· unsaved changes</span>
+      <span class="foot-hint">Keys: <kbd>Space</kbd> play · <kbd>S</kbd> split · <kbd>Del</kbd> remove · <kbd>←/→</kbd> move playhead · <kbd>E</kbd> end line · <kbd>+/-</kbd> zoom</span>
+    </div>
+  </section>
+
+  <aside class="inspector" id="inspector">
+    <h2>Inspector</h2>
+    <div id="inspector-empty" class="insp-empty">Select a clip or a track to edit it.</div>
+
+    <div id="insp-clip" class="insp-body" hidden>
+      <p class="insp-kicker">Clip</p>
+      <label>Name<input id="clip-name" type="text" spellcheck="false"></label>
+      <div class="grid-2">
+        <label>Start (s)<input id="clip-start" type="number" step="0.01" min="0"></label>
+        <label>Length (s)<input id="clip-length" type="number" step="0.01" min="0.01"></label>
+        <label>Source offset (s)<input id="clip-offset" type="number" step="0.01" min="0"></label>
+        <label>Move (s)
+          <span class="nudge">
+            <button class="mini-btn" data-nudge="-0.1">−.1</button>
+            <input id="clip-nudge" type="number" step="0.001" value="0.05" aria-label="Nudge amount">
+            <button class="mini-btn" data-nudge="0.1">+.1</button>
+          </span>
+        </label>
+      </div>
+      <label>Clip gain<input id="clip-gain" type="range" min="0" max="2" step="0.01" value="1"><output id="clip-gain-out">1.00</output></label>
+      <div class="grid-2">
+        <label>Fade in (s)<input id="clip-fade-in" type="number" step="0.01" min="0"></label>
+        <label>Fade out (s)<input id="clip-fade-out" type="number" step="0.01" min="0"></label>
+      </div>
+      <div class="insp-actions">
+        <button id="clip-split-playhead" class="btn">✂ Split at playhead</button>
+        <button id="clip-quantize" class="btn">⌖ Snap to playhead</button>
+        <button id="clip-restore" class="btn">↺ Restore full source</button>
+        <button id="clip-delete" class="btn btn-danger">🗑 Remove clip</button>
+      </div>
+    </div>
+
+    <div id="insp-track" class="insp-body" hidden>
+      <p class="insp-kicker">Track</p>
+      <label>Name<input id="track-name" type="text" spellcheck="false"></label>
+      <label>Track gain<input id="track-gain" type="range" min="0" max="2" step="0.01" value="1"><output id="track-gain-out">1.00</output></label>
+      <div class="insp-actions">
+        <button id="track-up" class="btn">▲ Move up</button>
+        <button id="track-down" class="btn">▼ Move down</button>
+        <button id="track-clear" class="btn">⌫ Clear clips</button>
+        <button id="track-delete" class="btn btn-danger">🗑 Remove track</button>
+      </div>
+    </div>
+    <div id="insp-project" class="insp-body">
+      <p class="insp-kicker">Project length</p>
+      <div class="grid-2">
+        <label>End line (s)<input id="proj-end" type="number" step="0.01" min="0" placeholder="0.00" inputmode="decimal"
+                                  title="Total length in seconds, 0.01 s steps. Leave empty to follow the last clip."></label>
+        <label>Last clip (s)<input id="proj-content" type="text" readonly tabindex="-1" aria-label="Length of the audio on the timeline"></label>
+      </div>
+      <p class="insp-state" id="proj-end-state"></p>
+      <div class="insp-actions">
+        <button id="proj-end-here" class="btn">▮ End at playhead</button>
+        <button id="proj-end-content" class="btn">▮ End at last clip</button>
+        <button id="proj-end-clear" class="btn" disabled>✕ Follow last clip</button>
+      </div>
+      <p class="hint">The end line is where playback and the WAV export stop, in 0.01 s steps. Put it before the last clip to trim the mix, past it for a silent tail. Drag the ▮ marker on the ruler, or press <kbd>E</kbd> to set it at the playhead and <kbd>Shift</kbd>+<kbd>E</kbd> to remove it.</p>
+    </div>
+  </aside>
+</main>
+
+<div id="drop-veil" class="drop-veil" hidden>
+  <div class="drop-veil-inner">Release to add audio to the timeline</div>
+</div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="js/model.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
